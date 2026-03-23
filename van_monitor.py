@@ -303,11 +303,10 @@ class SystemVanDashboard:
 
     def parse_text(self, seq_no, raw_text):
         """
-        정규식 패턴 기반 텍스트 파싱
-        - config.json의 regex_patterns 활용
-        - 알 수 없는 알림 유형은 'unknown'으로 표시하고 로그에 기록
+        정규식 패턴 기반 텍스트 파싱 (온라인/배치 양식 분기 처리)
         """
         import re
+        from datetime import datetime
         
         parsed = {
             "seq": seq_no, 
@@ -320,14 +319,10 @@ class SystemVanDashboard:
             "suggested_type": None 
         }
         
-        # config에서 패턴 로드
         patterns = self.config.get('regex_patterns', {})
         alarm_patterns = patterns.get('alarm_type', {})
-        org_patterns = patterns.get('org_code', {})
-        time_pattern = patterns.get('time', r'(3\.\s*일시\s*:\s*|일시\s*:\s*)([^\n]+)')
-        details_pattern = patterns.get('details', r'2\.\s*내용\s*:\s*([^\n]+)')
         
-        # 1. 알람 유형 파싱
+        # 1. 알람 유형 판별
         detected_type = None
         for type_name, pattern in alarm_patterns.items():
             if re.search(pattern, raw_text):
@@ -342,38 +337,71 @@ class SystemVanDashboard:
             unknown_match = re.search(r'\[티머니\]\s*([^\n]+)', raw_text)
             if unknown_match:
                 parsed["suggested_type"] = unknown_match.group(1).strip()
-        
-        # 2. 기관 코드 파싱
-        detected_org = None
-        for org_name, pattern in org_patterns.items():
-            if re.search(pattern, raw_text):
-                detected_org = org_name
-                break
-        
-        if detected_org:
-            parsed["org"] = detected_org
-        
-        # 3. 시간 파싱
-        time_match = re.search(time_pattern, raw_text)
-        if time_match:
-            parsed["time"] = time_match.group(2).strip()
-        
-        # 4. 상세 내용 파싱
-        details_match = re.search(details_pattern, raw_text)
-        if details_match:
-            parsed["details"] = details_match.group(1).strip()
-        
-        # 5. 기타 필드
-        etc_match = re.search(r'4\.\s*기타\s*:\s*([^\n]*)', raw_text)
-        if etc_match and etc_match.group(1).strip():
-            etc_content = etc_match.group(1).strip()
-            if parsed["details"]:
-                parsed["details"] = f"{parsed['details']} / {etc_content}"
+
+        # 2. 배치 알람 vs 온라인 알람 분기 파싱
+        is_batch = "배치" in parsed["type"] or "배치프로그램" in raw_text
+
+        if is_batch:
+            # [배치 전용 파싱 로직]
+            prog_match = re.search(r'1\.\s*프로그램\s*:\s*([^\n]+)', raw_text)
+            desc_match = re.search(r'2\.\s*설명\s*:\s*([^\n]+)', raw_text)
+            stat_match = re.search(r'3\.\s*상태\s*:\s*([^\n]+)', raw_text)
+            time_match = re.search(r'4\.\s*일시\s*:\s*([^\n]+)', raw_text)
+
+            # 프로그램명을 기관(org) 컬럼에 배치
+            if prog_match:
+                parsed["org"] = prog_match.group(1).strip()
             else:
-                parsed["details"] = etc_content
+                parsed["org"] = "내부배치"
+
+            # 설명과 상태를 합쳐서 상세내용(details) 구성
+            details_list = []
+            if desc_match:
+                details_list.append(desc_match.group(1).strip())
+            if stat_match:
+                details_list.append(stat_match.group(1).strip())
+            parsed["details"] = " / ".join(details_list)
+
+            # 일시 포맷팅 (연도가 없으면 현재 연도 추가)
+            if time_match:
+                time_str = time_match.group(1).strip()
+                if len(time_str) <= 11:  # "03/22 10:29" 형태일 경우
+                    current_year = datetime.now().year
+                    time_str = f"{current_year}/{time_str}"
+                parsed["time"] = time_str
+        else:
+            # [기존 온라인 전용 파싱 로직]
+            org_patterns = patterns.get('org_code', {})
+            detected_org = None
+            for org_name, pattern in org_patterns.items():
+                if re.search(pattern, raw_text):
+                    detected_org = org_name
+                    break
+            
+            if detected_org:
+                parsed["org"] = detected_org
+            
+            time_pattern = patterns.get('time', r'(3\.\s*일시\s*:\s*|일시\s*:\s*)([^\n]+)')
+            time_match = re.search(time_pattern, raw_text)
+            if time_match:
+                parsed["time"] = time_match.group(2).strip()
+            
+            details_pattern = patterns.get('details', r'2\.\s*내용\s*:\s*([^\n]+)')
+            details_match = re.search(details_pattern, raw_text)
+            if details_match:
+                parsed["details"] = details_match.group(1).strip()
+            
+            etc_match = re.search(r'4\.\s*기타\s*:\s*([^\n]*)', raw_text)
+            if etc_match and etc_match.group(1).strip():
+                etc_content = etc_match.group(1).strip()
+                if parsed["details"]:
+                    parsed["details"] = f"{parsed['details']} / {etc_content}"
+                else:
+                    parsed["details"] = etc_content
         
+        # 3. 시간 예외 처리 (시간을 못 찾았을 경우 현재 시간 입력)
         if not parsed["time"]:
-            parsed["time"] = time.strftime("%Y/%m/%d %H:%M:%S")
+            parsed["time"] = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
         
         return parsed
 
@@ -490,7 +518,7 @@ class SystemVanDashboard:
     def receive_test_data(self):
         seq = len(self.all_alarms) + 1
         
-        # 기존 테스트 데이터
+        # 기존 테스트 데이터 (온라인)
         raw_text_1 = """
 [한국스마트카드] [오전 12:01] [티머니] 타임아웃 발생
 1. 기관 : 카드사(KBC)
@@ -513,10 +541,19 @@ class SystemVanDashboard:
 3. 일시 : 2026/03/21 15:30
 4. 기타 : .
 """
+        # 배치 알람 테스트 (양식 다름!)
+        raw_text_batch = """
+[티머니] 배치프로그램 점검!!
+1. 프로그램 : BC_ProcBL
+2. 설명 : 신용 현대카드 BL파일(VHBLmmdd) 처리
+3. 상태 : 배치프로그램 수행 실패 !
+4. 일시 : 03/22 10:29
+"""
         
         self.process_raw_alarm(seq, raw_text_1)
         self.process_raw_alarm(seq+1, raw_text_2)
         self.process_raw_alarm(seq+2, raw_text_unknown)
+        self.process_raw_alarm(seq+3, raw_text_batch)  # 배치 알람 테스트
 
 
 if __name__ == "__main__":
