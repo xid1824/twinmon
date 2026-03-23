@@ -91,8 +91,8 @@ class SystemVanDashboard:
         ctrl_frame = tk.Frame(self.root, pady=10)
         ctrl_frame.pack(fill="x", padx=10)
         
-        tk.Button(ctrl_frame, text="관제 시작", width=12, command=self.on_start, bg="#27ae60", fg="white").pack(side="left", padx=5)
-        tk.Button(ctrl_frame, text="관제 정지", width=12, command=self.on_stop, bg="#e74c3c", fg="white").pack(side="left", padx=5)
+        tk.Button(ctrl_frame, text="모니터링 시작", width=12, command=self.on_start, bg="#27ae60", fg="white").pack(side="left", padx=5)
+        tk.Button(ctrl_frame, text="모니터링 정지", width=12, command=self.on_stop, bg="#e74c3c", fg="white").pack(side="left", padx=5)
         tk.Button(ctrl_frame, text="테스트 데이터", width=15, command=self.receive_test_data).pack(side="left", padx=20)
         
         # 일시정지 체크박스
@@ -162,6 +162,9 @@ class SystemVanDashboard:
         
         # 컨텍스트 메뉴
         self.build_context_menu()
+        
+        # 더블클릭 이벤트 바인딩
+        self.tree.bind("<Double-1>", self.on_double_click)
 
     def setup_shortcuts(self):
         """단축키 바인딩"""
@@ -178,10 +181,19 @@ class SystemVanDashboard:
         for name, func in key_mappings.items():
             key = shortcuts.get(name, "")
             if key:
+                # 1. Tkinter가 인식할 수 있는 문법으로 치환 (Ctrl+P -> Control-p)
+                tk_key = key.replace("Ctrl+", "Control-").replace("Shift+", "Shift-").replace("Alt+", "Alt-")
+                
+                # 영문자 단축키인 경우 소문자로 강제 변환 (Tkinter는 <Control-p> 형태를 권장함)
+                if "Control-" in tk_key or "Alt-" in tk_key or "Shift-" in tk_key:
+                    parts = tk_key.split("-")
+                    tk_key = f"{parts[0]}-{parts[1].lower()}"
+
                 try:
-                    self.root.bind(f"<{key}>", lambda e: func())
-                except:
-                    pass
+                    # 2. lambda 파이썬 클로저(Closure) 덮어쓰기 버그를 막기 위해 f=func 매개변수 할당
+                    self.root.bind(f"<{tk_key}>", lambda e, f=func: f())
+                except Exception as e:
+                    print(f"[단축키 경고] {name}({key}) 바인딩 실패: {e}")
 
     def build_context_menu(self):
         self.context_menu = tk.Menu(self.root, tearoff=0)
@@ -208,7 +220,7 @@ class SystemVanDashboard:
     def toggle_pause(self):
         """일시정지 토글"""
         self.is_paused.set(not self.is_paused.get())
-        status = "일시정지 중" if self.is_paused.get() else "관제 가동 중"
+        status = "일시정지 중" if self.is_paused.get() else "모니터링 가동 중"
         self.update_status(status, "#e67e22" if self.is_paused.get() else "#27ae60")
 
     def update_status(self, text, color="#e74c3c"):
@@ -249,16 +261,81 @@ class SystemVanDashboard:
             self.snoozed_alarms.clear()
 
     def show_alarm_details(self):
+        """세련된 플랫(Flat) 디자인이 적용된 상세 정보 창"""
         selected = self.tree.selection()
         if not selected:
             return
+        
         item_values = self.tree.item(selected[0], "values")
-        msg = f"No: {item_values[0]}\n"
-        msg += f"시간: {item_values[1]}\n"
-        msg += f"유형: {item_values[2]}\n"
-        msg += f"기관: {item_values[3]}\n"
-        msg += f"상세: {item_values[4]}"
-        messagebox.showinfo("알람 상세", msg)
+        alarm_time = item_values[1]
+        alarm_type = item_values[2]
+        alarm_org = item_values[3]
+        alarm_details = item_values[4]
+        
+        detail_win = tk.Toplevel(self.root)
+        detail_win.title("장애 알람 상세 리포트")
+        detail_win.geometry("500x380")
+        detail_win.configure(bg="#f8f9fa")  # 모던한 밝은 회색 배경
+        detail_win.grab_set()
+        
+        # 1. 상단 타이틀 헤더 (다크 블루 톤)
+        header_frame = tk.Frame(detail_win, bg="#2c3e50", height=60)
+        header_frame.pack(fill="x")
+        header_frame.pack_propagate(False)  # 프레임 높이 고정
+        
+        tk.Label(header_frame, text=f"[{alarm_type}] 상세 리포트", 
+                bg="#2c3e50", fg="white", font=("맑은 고딕", 13, "bold")).pack(side="left", padx=20, pady=15)
+        
+        # 2. 메인 정보 카드 영역 (흰색 배경 + 넉넉한 여백)
+        content_frame = tk.Frame(detail_win, bg="white", padx=25, pady=20)
+        content_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        info_font = ("맑은 고딕", 11)
+        tk.Label(content_frame, text=f"발생 일시 : {alarm_time}", bg="white", font=info_font).pack(anchor="w", pady=4)
+        tk.Label(content_frame, text=f"발생 기관 : {alarm_org}", bg="white", font=info_font).pack(anchor="w", pady=4)
+        
+        # 구분선 (연한 회색)
+        tk.Frame(content_frame, bg="#e9ecef", height=2).pack(fill="x", pady=15)
+        
+        # 3. 텍스트 영역 (테두리 제거, 연한 배경색으로 가독성 향상)
+        tk.Label(content_frame, text="상세 내용", bg="white", font=("맑은 고딕", 10, "bold"), fg="#7f8c8d").pack(anchor="w", pady=(0,5))
+        
+        detail_text = tk.Text(content_frame, wrap="word", height=4, font=("맑은 고딕", 11), 
+                bg="#f1f3f5", fg="#2d3436", relief="flat", padx=15, pady=15)
+        detail_text.pack(fill="both", expand=True)
+        detail_text.insert(tk.END, alarm_details)
+        detail_text.config(state=tk.DISABLED)
+        
+        # 4. 하단 액션 버튼 영역
+        btn_frame = tk.Frame(detail_win, bg="#f8f9fa")
+        btn_frame.pack(fill="x", pady=(0, 20))
+        
+        # 좌측: 즉시 10분 차단 퀵 액션 (오렌지색)
+        tk.Button(btn_frame, text="이 기관/유형 10분 차단", bg="#e67e22", fg="white", relief="flat", 
+                font=("맑은 고딕", 10, "bold"), padx=10, pady=5, cursor="hand2",
+                command=lambda: [self.snooze_specific_alarm(alarm_type, alarm_org, 10), detail_win.destroy()]).pack(side="left", padx=20)
+        
+        # 우측: 닫기 버튼 (회색)
+        tk.Button(btn_frame, text="닫기", bg="#95a5a6", fg="white", relief="flat", 
+                font=("맑은 고딕", 10, "bold"), width=10, pady=5, cursor="hand2",
+                command=detail_win.destroy).pack(side="right", padx=20)
+
+    def on_double_click(self, event):
+        """더블클릭 시 실행되는 핸들러"""
+        row_id = self.tree.identify_row(event.y)
+        if row_id:
+            self.tree.selection_set(row_id)
+            self.show_alarm_details()
+
+    def snooze_specific_alarm(self, alarm_type, alarm_org, minutes):
+        """상세창 전용 차단 로직 (파라미터 직접 전달)"""
+        snooze_key = f"{alarm_type}_{alarm_org}"
+        expiry_time = time.time() + (minutes * 60)
+        self.snoozed_alarms[snooze_key] = expiry_time
+        
+        # 차단 완료 후 토스트 알림으로 부드럽게 피드백
+        if self.noti_type.get() != "log_only":
+            self.show_toast(f"[{alarm_type}] - [{alarm_org}]\n알림이 {minutes}분간 차단되었습니다.")
 
     # ==========================================
     # 백엔드 로직
@@ -501,7 +578,7 @@ class SystemVanDashboard:
 
     def on_start(self):
         self.is_running = True
-        self.update_status("관제 가동 중", "#27ae60")
+        self.update_status("모니터링 가동 중", "#27ae60")
         messagebox.showinfo("안내", "VAN/PG 모니터링을 시작합니다.")
 
     def on_stop(self):
