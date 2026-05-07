@@ -117,12 +117,16 @@ class SystemVanDashboard:
         tk.Button(filter_frame, text="조회 적용", width=12, command=self.apply_filter).pack(side="left", padx=20)
         tk.Button(filter_frame, text="차단 목록", width=12, command=self.show_snoozed_list).pack(side="right", padx=5)
 
-        # 4. 데이터 그리드
-        list_frame = tk.Frame(self.root)
-        list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        # 4. Notebook (탭 구조)
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # ----- 탭 1: 장애 알람 -----
+        tab_alarm = ttk.Frame(self.notebook)
+        self.notebook.add(tab_alarm, text='[장애 알람 모니터링]')
         
         columns = ("seq", "time", "type", "org", "details")
-        self.tree = ttk.Treeview(list_frame, columns=columns, show="headings", selectmode="browse")
+        self.tree = ttk.Treeview(tab_alarm, columns=columns, show="headings", selectmode="browse")
         
         self.tree.heading("seq", text="No")
         self.tree.heading("time", text="발생 일시")
@@ -136,7 +140,7 @@ class SystemVanDashboard:
         self.tree.column("org", width=80, anchor="center")
         self.tree.column("details", width=500, anchor="w")
         
-        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=self.tree.yview)
+        vsb = ttk.Scrollbar(tab_alarm, orient="vertical", command=self.tree.yview)
         vsb.pack(side="right", fill="y")
         self.tree.configure(yscrollcommand=vsb.set)
         self.tree.pack(fill="both", expand=True)
@@ -147,7 +151,11 @@ class SystemVanDashboard:
         
         self.build_context_menu()
         self.tree.bind("<Double-1>", self.on_double_click)
-
+        
+        # ----- 탭 2: 파일/배치 모니터링 (main.py에서 주입) -----
+        self.tab_file_batch = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_file_batch, text='[파일/배치 모니터링]')
+        
         # 트레이 아이콘 변수
         self.tray_icon = None
 
